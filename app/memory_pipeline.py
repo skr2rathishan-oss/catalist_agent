@@ -228,7 +228,7 @@ def extract_meeting(meeting: dict, client, memory_dir=MEMORY_DIR,
                 and existing.get("generation_max_tokens") == max_tokens
                 and existing.get("max_words") == max_words
                 and (not retry_rejected or existing.get("rejected_records", 0) == 0)
-                and existing.get("records")):
+                and isinstance(existing.get("records"), list)):
             for record in existing["records"]:
                 validate_record(record, {meeting["meeting_id"]: meeting})
             return {"meeting_id": meeting["meeting_id"], "records": len(existing["records"]),

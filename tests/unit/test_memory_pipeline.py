@@ -74,6 +74,18 @@ class TestMemoryPipeline(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "exceeds"):
             turn_windows(item, max_words=6)
 
+    def test_empty_meeting_memory_is_cached(self):
+        item = meeting("ES2002a", "We talked without recording any decision or action.")
+        class EmptyClient(FakeClient):
+            def generate_json(self, system, payload):
+                self.calls += 1
+                return {"records": []}
+        client = EmptyClient()
+        with tempfile.TemporaryDirectory() as directory:
+            self.assertEqual(extract_meeting(item, client, Path(directory))["records"], 0)
+            self.assertTrue(extract_meeting(item, client, Path(directory))["cached"])
+            self.assertEqual(client.calls, 1)
+
     def test_reconciliation_checks_related_topic_wording(self):
         first = meeting("ES2002a", "We decided on normal batteries for power.")
         later = meeting("ES2002c", "We changed the battery choice to rechargeable cells.")
