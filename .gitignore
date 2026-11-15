@@ -1,0 +1,48 @@
+.venv/
+venv/
+.env
+.env.*
+!.env.example
+__pycache__/
+*.pyc
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+data/**
+!data/.gitkeep
+
+# Assignment questions and evaluation reports can contain source excerpts.
+/evaluation/
+/tests/questions.json
+/tests/rag_test_questions.json
+
+# Local project documents; keep these on disk without publishing them.
+/docs/
+/guideline.md
+/Catalist_Agentic_AI_Intern_Build_Test.pdf
+
+# Generated reports and submission artifacts.
+/evaluation/results.md
+/outputs/
+/tmp/
+
+# Keep the previous local Git history if it is archived in this folder.
+/.git-old-local/
+
+# Generated databases, vector indexes, model weights, and numeric arrays.
+# Gitignore cannot filter by file size, so keep common large artifact types out.
+*.sqlite
+*.sqlite3
+*.sqlite3-*
+*.db
+*.db-*
+*.faiss
+*.index
+*.npy
+*.npz
+*.pt
+*.pth
+*.onnx
+*.safetensors
