@@ -86,6 +86,21 @@ class TestMemoryPipeline(unittest.TestCase):
             self.assertTrue(extract_meeting(item, client, Path(directory))["cached"])
             self.assertEqual(client.calls, 1)
 
+    def test_unambiguous_missing_contract_fields_are_filled(self):
+        item = meeting("ES2002a", "We agreed to use normal batteries only.")
+        class OmittedFieldsClient(FakeClient):
+            def generate_json(self, system, payload):
+                result = super().generate_json(system, payload)
+                for field in ("status", "owner", "owner_source_turn_ids", "supersedes"):
+                    result["records"][0].pop(field)
+                return result
+        client = OmittedFieldsClient()
+        with tempfile.TemporaryDirectory() as directory:
+            result = extract_meeting(item, client, Path(directory))
+            self.assertEqual(result["records"], 1)
+            self.assertEqual(result["rejected_records"], 0)
+            self.assertEqual(client.calls, 1)
+
     def test_reconciliation_checks_related_topic_wording(self):
         first = meeting("ES2002a", "We decided on normal batteries for power.")
         later = meeting("ES2002c", "We changed the battery choice to rechargeable cells.")

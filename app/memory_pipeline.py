@@ -94,7 +94,7 @@ def _source_excerpt(text: str, hint: str, max_words: int = 40) -> str | None:
 
 
 def _normalise_source_fields(item: dict, meeting: dict, turn_ids: list[int], number: int) -> dict:
-    """Supply only identities determined by the selected source, never event facts."""
+    """Supply identities and unambiguous extraction-contract defaults only."""
 
     if not isinstance(item, dict):
         return item
@@ -102,6 +102,13 @@ def _normalise_source_fields(item: dict, meeting: dict, turn_ids: list[int], num
     result["event_id"] = f"{meeting['meeting_id']}_draft_{number:03d}"
     result.setdefault("meeting_id", meeting["meeting_id"])
     result.setdefault("team_id", meeting["team_id"])
+    result.setdefault("supersedes", [])
+    result.setdefault("owner", None)
+    if result["owner"] is None:
+        result.setdefault("owner_source_turn_ids", [])
+    default_status = {"decision": "agreed", "change": "agreed", "number": "recorded"}
+    if result.get("type") in default_status:
+        result.setdefault("status", default_status[result["type"]])
     if isinstance(result.get("source_turn_ids"), list):
         try:
             speakers = {turn["speaker_id"] for turn in
