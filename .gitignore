@@ -23,6 +23,21 @@ data/**
 /guideline.md
 /Catalist_Agentic_AI_Intern_Build_Test.pdf
 
+# Private documents and transcript exports, even if placed outside data/.
+*.pdf
+*.doc
+*.docx
+*.odt
+*.rtf
+*.ppt
+*.pptx
+*.xls
+*.xlsx
+*.csv
+*.tsv
+*.txt
+!requirements.txt
+
 # Generated reports and submission artifacts.
 /evaluation/results.md
 /outputs/
