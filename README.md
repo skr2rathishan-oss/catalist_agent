@@ -117,12 +117,12 @@ git check-ignore -v .env data/raw/transcripts/ES2002a.txt data/processed/vectors
 
 The new GitHub repository should receive a **fresh root commit**. Older local history tracked `.env` and cache files, so do not push an old branch or its history. Before pushing, inspect the staged file list and confirm it contains code, tests, `.env.example`, `.gitignore`, `requirements.txt`, `README.md`, and `data/.gitkeep` only. Never use `git add -f` for ignored files. If a real key was ever pushed to the previous remote, rotate it with the provider.
 
-Create an empty GitHub repository with no generated README or license, then add its URL and push the clean branch:
+This repository is published at [catalist_agent](https://github.com/skr2rathishan-oss/catalist_agent). For subsequent changes, review staged files and push `main`:
 
 ```powershell
-git remote remove origin
-git remote add origin https://github.com/<your-user>/<new-repository>.git
-git push -u origin main
+git status --short
+git diff --cached --name-only
+git push origin main
 ```
 
-Keep `space` or any other deployment remote out of this push workflow unless you explicitly intend to publish there; a deployment can expose data or require separate storage and secret configuration.
+If you make a separate clean copy without an `origin`, add `https://github.com/skr2rathishan-oss/catalist_agent.git` with `git remote add origin <url>` first. Keep `space` or any other deployment remote out of this push workflow unless you explicitly intend to publish there; a deployment can expose data or require separate storage and secret configuration.
