@@ -71,18 +71,20 @@ def main():
             result = agent.answer(case["question"], case["team"], "d")
             if result["status"] != "answered":
                 failures.append({"question_id": case["question_id"], "status": result["status"],
+                                 "team": case["team"], "question": case["question"],
                                  "reason": result.get("reason"), "trace": result.get("trace", [])})
                 print(f"  FAILED {result['status']}: {result.get('reason')}", flush=True)
-                continue
+                break
             answers.append({"question_id": case["question_id"], "answer": result["answer"],
                             "citations": result["citations"]})
             write_submission(answers, brief, output)
             print(f"  answered in {time.monotonic() - started:.1f}s; checkpointed", flush=True)
         except (ValueError, OSError, sqlite3.DatabaseError, GenerationError, EmbeddingError) as error:
-            failures.append({"question_id": case["question_id"], "status": "error", "reason": str(error)})
+            failures.append({"question_id": case["question_id"], "status": "error",
+                             "team": case["team"], "question": case["question"],
+                             "reason": str(error), "provider_status": getattr(error, "status", None)})
             print(f"  ERROR {type(error).__name__}: {error}", flush=True)
-            if getattr(error, "status", None) in (429, 402):
-                break
+            break
 
     ordering = {case["question_id"]: index for index, case in enumerate(questions)}
     answers.sort(key=lambda item: ordering[item["question_id"]])
@@ -96,7 +98,9 @@ def main():
                                                       memory_dir=MEMORY_DIR)).build()
             write_submission(answers, brief, output)
         except (ValueError, OSError, sqlite3.DatabaseError, GenerationError, EmbeddingError) as error:
-            failures.append({"question_id": "brief", "status": "error", "reason": str(error)})
+            failures.append({"question_id": "brief", "status": "error",
+                             "team": "TS3012", "question": "Pre-final meeting brief",
+                             "reason": str(error), "provider_status": getattr(error, "status", None)})
             print(f"  ERROR building brief: {type(error).__name__}: {error}", flush=True)
     report = output.with_name("submission_run.json")
     report.write_text(json.dumps({"model": model, "backups": args.backup, "method": args.method,

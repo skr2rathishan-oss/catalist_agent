@@ -129,10 +129,10 @@ Optional local evaluation and submission commands require question files that ar
 .\.venv\Scripts\python.exe scripts/evaluate_answers.py
 .\.venv\Scripts\python.exe scripts/evaluate_answers.py --run --method hybrid
 .\.venv\Scripts\python.exe scripts/test_rag.py --id 1 --method bm25 --no-judge
-.\.venv\Scripts\python.exe scripts/submit.py --questions tests/questions.json --method hybrid
+.\.venv\Scripts\python.exe scripts/submit.py --questions evaluation/questions.json --output outputs/answers.json --method hybrid --model nvidia/nemotron-3.5-lightning-30b-a3b --resume
 ```
 
-The submission script expects a local JSON object with a `questions` array. Each item contains `question_id`, `team`, and `question`. `scripts/test_rag.py` uses `tests/rag_test_questions.json` for its development benchmark. These files remain on the machine that owns the data. Submission output goes to `outputs/answers.json`; detailed runs and reports also stay local.
+The submission script expects a local JSON object with a `questions` array. Each item contains `question_id`, `team`, and `question`. `scripts/test_rag.py` uses `tests/rag_test_questions.json` for its development benchmark. These files remain on the machine that owns the data. Submission output goes to `outputs/answers.json`; detailed runs and reports also stay local. Successful answers are checkpointed after each question. The script stops at the first failed answer or provider error, records that question and reason in `outputs/submission_run.json`, and exits with a nonzero status; `--resume` keeps completed answers. A partial `answers.json` is a checkpoint, not a ready submission. Run `scripts/verify_submission.py` only after all 25 answers and the brief are complete.
 
 ## Where data is stored
 
