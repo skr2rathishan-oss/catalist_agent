@@ -69,6 +69,17 @@ class TestGeneration(unittest.TestCase):
         self.assertEqual(self.client.generate_json("JSON", {"retry": True}), {"ok": True})
         self.assertEqual(self.transport.call_count, 2)
 
+    def test_extraction_can_fail_fast_on_invalid_json(self):
+
+        self.transport.side_effect = response("not json")
+        client = NvidiaGenerationClient(self.settings, self.root / "fast-cache.sqlite3",
+                                        self.root / "fast-usage.jsonl", self.transport,
+                                        self.sleep, invalid_response_retries=0)
+        with self.assertRaises(GenerationError) as caught:
+            client.generate_json("JSON", {})
+        self.assertEqual(caught.exception.status, "invalid_response")
+        self.assertEqual(self.transport.call_count, 1)
+
     def test_missing_key_does_not_send_request(self):
 
         with self.assertRaises(GenerationError):

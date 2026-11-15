@@ -28,7 +28,8 @@ class NvidiaGenerationClient:
     """Provider adapter; the historical name remains compatible with existing imports."""
 
     def __init__(self, settings=None, cache_path=GENERATION_CACHE_FILE,
-                 usage_path=GENERATION_USAGE_FILE, transport=None, sleep=None):
+                 usage_path=GENERATION_USAGE_FILE, transport=None, sleep=None,
+                 invalid_response_retries=None):
 
         self.settings = settings or load_generation_settings()
         self.provider = self.settings.provider
@@ -37,6 +38,7 @@ class NvidiaGenerationClient:
         self.usage_path = project_path(usage_path)
         self.transport = transport or urlopen
         self.sleep = sleep or time.sleep
+        self.invalid_response_retries = invalid_response_retries
         self.last_request = None
         self.api_requests = 0
         self.cache_hits = 0
@@ -148,7 +150,9 @@ class NvidiaGenerationClient:
             except (URLError, TimeoutError, socket.timeout, ConnectionError):
                 retryable = True
             except (ValueError, TypeError, KeyError, IndexError, AttributeError):
-                status, retryable = "invalid_response", True
+                status = "invalid_response"
+                retryable = (self.invalid_response_retries is None
+                             or attempt < self.invalid_response_retries)
             self.log_usage(started, status, None)
             if status == 429 and attempt == self.settings.max_retries:
                 raise GenerationError(

@@ -29,6 +29,8 @@ def main():
     parser.add_argument("--no-reconcile", action="store_true", help="Extract without linking replacements")
     parser.add_argument("--reconcile-only", action="store_true",
                         help="Link complete saved team memories without rerunning extraction")
+    parser.add_argument("--retry-rejected", action="store_true",
+                        help="Re-extract matching meeting files that contain rejected records")
     args = parser.parse_args()
     if args.team and not re.fullmatch(r"[A-Z]{2}\d{4}", args.team):
         parser.error("--team must be a corpus team ID")
@@ -56,14 +58,17 @@ def main():
                          indent=2))
         return
     client = NvidiaGenerationClient(replace(load_generation_settings(model=args.model),
-                                            max_tokens=args.max_tokens))
+                                            max_tokens=args.max_tokens),
+                                    invalid_response_retries=0)
     fallback = (NvidiaGenerationClient(replace(load_generation_settings(model=args.fallback_model),
-                                               max_tokens=args.max_tokens))
+                                               max_tokens=args.max_tokens),
+                                       invalid_response_retries=0)
                 if args.fallback_model else None)
     results, failures = [], []
     for meeting in ([] if args.reconcile_only else meetings):
         try:
-            result = extract_meeting(meeting, client, MEMORY_DIR, args.max_words, fallback)
+            result = extract_meeting(meeting, client, MEMORY_DIR, args.max_words,
+                                     fallback, retry_rejected=args.retry_rejected)
             results.append(result)
             print(json.dumps(result), flush=True)
         except (OSError, ValueError, RuntimeError) as error:

@@ -6,6 +6,7 @@ import tempfile
 import unittest
 from types import SimpleNamespace
 
+from app.generation import GenerationError
 from app.memory_pipeline import extract_meeting, load_team_memory, memory_hints, reconcile_team, turn_windows
 
 
@@ -107,6 +108,54 @@ class TestMemoryPipeline(unittest.TestCase):
             self.assertEqual(result["records"], 1)
             self.assertEqual(result["fallback_windows"], 1)
             self.assertEqual(result["rejected_records"], 0)
+
+    def test_invalid_long_window_splits_on_source_turns(self):
+        first = "We agreed to use normal batteries only."
+        second = "We agreed to use a bright display too."
+        source = first + "\n" + second
+        item = meeting("ES2002a", source)
+        item["utterances"] = [dict(item["utterances"][0], original_text=first,
+                                   start_char=0, end_char=len(first)),
+                              dict(item["utterances"][0], utterance_id=2,
+                                   original_text=second, start_char=len(first) + 1,
+                                   end_char=len(source))]
+        class FailsLongClient(FakeClient):
+            def generate_json(self, system, payload):
+                if len(payload["source_context"]["turns"]) > 1:
+                    raise GenerationError("Invalid JSON", status="invalid_response")
+                result = super().generate_json(system, payload)
+                turn_id = payload["source_context"]["turns"][0]["turn_id"]
+                result["records"][0]["source_turn_ids"] = [turn_id]
+                result["records"][0]["evidence"][0]["turn_id"] = turn_id
+                return result
+        with tempfile.TemporaryDirectory() as directory:
+            result = extract_meeting(item, FailsLongClient(), Path(directory))
+            self.assertEqual(result["records"], 2)
+            self.assertEqual(result["windows"], 2)
+
+    def test_empty_long_response_is_recovered_by_smaller_windows(self):
+        first = "We agreed on normal batteries. " + "Discussion continued. " * 250
+        second = "We agreed on a bright display. " + "Discussion continued. " * 250
+        source = first + "\n" + second
+        item = meeting("ES2002a", source)
+        item["utterances"] = [dict(item["utterances"][0], original_text=first,
+                                   start_char=0, end_char=len(first)),
+                              dict(item["utterances"][0], utterance_id=2,
+                                   original_text=second, start_char=len(first) + 1,
+                                   end_char=len(source))]
+        class EmptyLongClient(FakeClient):
+            def generate_json(self, system, payload):
+                turns = payload["source_context"]["turns"]
+                if len(turns) > 1:
+                    return {"records": []}
+                result = super().generate_json(system, payload)
+                result["records"][0]["source_turn_ids"] = [turns[0]["turn_id"]]
+                result["records"][0]["evidence"][0]["turn_id"] = turns[0]["turn_id"]
+                return result
+        with tempfile.TemporaryDirectory() as directory:
+            result = extract_meeting(item, EmptyLongClient(), Path(directory))
+            self.assertEqual(result["records"], 2)
+            self.assertEqual(result["windows"], 2)
 
 
 if __name__ == "__main__":

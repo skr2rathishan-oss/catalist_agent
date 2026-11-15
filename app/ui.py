@@ -548,7 +548,8 @@ def build_ui():
 
     teams = sorted({path.stem[:-1] for path in PARSED_DIR.glob('*.json')
                     if re.fullmatch(r'[A-Z]{2}\d{4}[a-d]', path.stem)})
-    with gr.Blocks(title="Meeting RAG Assistant", fill_width=True) as demo:
+    with gr.Blocks(title="Meeting RAG Assistant", fill_width=True,
+                   analytics_enabled=False) as demo:
         gr.Markdown("# Meeting RAG Assistant\nAsk about the meeting transcripts. The agent searches, checks "
                     "evidence and verifies every quote before answering.")
         gr.Markdown(readiness())

@@ -8,6 +8,7 @@ import re
 
 from app.config import MEMORY_CONTEXT_MAX_WORDS, MEMORY_DIR, PARSED_DIR, project_path
 from app.citations import verify_quote, quote_with_context
+from app.generation import GenerationError
 from app.memory import (build_memory_prompt, memory_as_of, record_to_dict, source_turns,
                         topic_terms, validate_extraction, validate_ledger, validate_record)
 from app.agents.prompts import MEMORY_PROMPT_VERSION, MEMORY_RECONCILIATION_INSTRUCTIONS
@@ -151,8 +152,68 @@ def _extract_window(meeting: dict, turn_ids: list[int], client) -> tuple[list, i
     return extracted, max(0, len(invalid) - repaired)
 
 
+def _structural_failure(error: Exception) -> bool:
+    return isinstance(error, ValueError) or (isinstance(error, GenerationError)
+                                               and error.status == "invalid_response")
+
+
+def _split_turn_ids(meeting: dict, turn_ids: list[int]) -> tuple[list[int], list[int]]:
+    sizes = {turn["utterance_id"]: len(turn["original_text"].split())
+             for turn in meeting["utterances"] if turn["utterance_id"] in turn_ids}
+    half = sum(sizes[turn_id] for turn_id in turn_ids) / 2
+    total, split_at = 0, 1
+    for index, turn_id in enumerate(turn_ids[:-1], 1):
+        total += sizes[turn_id]
+        split_at = index
+        if total >= half:
+            break
+    return turn_ids[:split_at], turn_ids[split_at:]
+
+
+def _extract_resilient(meeting: dict, turn_ids: list[int], client, fallback_client=None):
+    """Subdivide empty or malformed long windows; use fallback on smaller ones."""
+
+    word_count = sum(len(turn["original_text"].split()) for turn in meeting["utterances"]
+                     if turn["utterance_id"] in turn_ids)
+    long_window = word_count > 900 and len(turn_ids) > 1
+    try:
+        try:
+            extracted, rejected = _extract_window(meeting, turn_ids, client)
+        except (ValueError, GenerationError) as error:
+            if not _structural_failure(error) or long_window or fallback_client is None:
+                raise
+            extracted, rejected = _extract_window(meeting, turn_ids, fallback_client)
+            if not extracted and len(turn_ids) > 1:
+                raise ValueError("Both models returned no usable records for a long window")
+            return extracted, rejected, 1, 1
+        if not extracted and long_window:
+            raise ValueError("No records from a long memory window")
+        if fallback_client is not None and not long_window and (
+                not extracted or rejected > max(2, len(extracted) // 2)):
+            try:
+                alternative, alternative_rejected = _extract_window(
+                    meeting, turn_ids, fallback_client)
+                if (len(alternative) > len(extracted)
+                        or (len(alternative) == len(extracted)
+                            and alternative_rejected < rejected)):
+                    return alternative, alternative_rejected, 1, 1
+            except (ValueError, RuntimeError) as error:
+                if not extracted and _structural_failure(error):
+                    raise
+        return extracted, rejected, 0, 1
+    except (ValueError, GenerationError) as error:
+        if not _structural_failure(error) or len(turn_ids) < 2:
+            raise
+        left, right = _split_turn_ids(meeting, turn_ids)
+        first = _extract_resilient(meeting, left, client, fallback_client)
+        second = _extract_resilient(meeting, right, client, fallback_client)
+        return (first[0] + second[0], first[1] + second[1],
+                first[2] + second[2], first[3] + second[3])
+
+
 def extract_meeting(meeting: dict, client, memory_dir=MEMORY_DIR,
-                    max_words: int = MEMORY_CONTEXT_MAX_WORDS, fallback_client=None) -> dict:
+                    max_words: int = MEMORY_CONTEXT_MAX_WORDS, fallback_client=None,
+                    retry_rejected: bool = False) -> dict:
     """Extract bounded windows, validate quotes, and reuse matching local results."""
 
     memory_dir = project_path(memory_dir)
@@ -166,36 +227,20 @@ def extract_meeting(meeting: dict, client, memory_dir=MEMORY_DIR,
                 and existing.get("prompt_version") == MEMORY_PROMPT_VERSION
                 and existing.get("generation_max_tokens") == max_tokens
                 and existing.get("max_words") == max_words
-                and existing.get("rejected_records", 0) == 0
+                and (not retry_rejected or existing.get("rejected_records", 0) == 0)
                 and existing.get("records")):
             for record in existing["records"]:
                 validate_record(record, {meeting["meeting_id"]: meeting})
             return {"meeting_id": meeting["meeting_id"], "records": len(existing["records"]),
                     "windows": 0, "rejected_records": existing.get("rejected_records", 0),
                     "fallback_windows": existing.get("fallback_windows", 0), "cached": True}
-    records, rejected_records, fallback_windows = [], 0, 0
+    records, rejected_records, fallback_windows, actual_windows = [], 0, 0, 0
     windows = turn_windows(meeting, max_words)
     for number, turn_ids in enumerate(windows, 1):
-        try:
-            extracted, rejected = _extract_window(meeting, turn_ids, client)
-        except ValueError:
-            if fallback_client is None:
-                raise
-            extracted, rejected = _extract_window(meeting, turn_ids, fallback_client)
-            fallback_windows += 1
-        else:
-            if fallback_client is not None and (
-                    not extracted or rejected > max(2, len(extracted) // 2)):
-                try:
-                    alternative, alternative_rejected = _extract_window(
-                        meeting, turn_ids, fallback_client)
-                    if (len(alternative) > len(extracted)
-                            or (len(alternative) == len(extracted)
-                                and alternative_rejected < rejected)):
-                        extracted, rejected = alternative, alternative_rejected
-                        fallback_windows += 1
-                except (ValueError, RuntimeError):
-                    pass
+        extracted, rejected, fallbacks, leaves = _extract_resilient(
+            meeting, turn_ids, client, fallback_client)
+        fallback_windows += fallbacks
+        actual_windows += leaves
         rejected_records += rejected
         for index, record in enumerate(extracted, 1):
             record = replace(record, event_id=f"{meeting['meeting_id']}_w{number:03d}_e{index:03d}")
@@ -204,9 +249,10 @@ def extract_meeting(meeting: dict, client, memory_dir=MEMORY_DIR,
                        "model": model, "prompt_version": MEMORY_PROMPT_VERSION,
                        "max_words": max_words, "generation_max_tokens": max_tokens,
                        "rejected_records": rejected_records, "fallback_windows": fallback_windows,
+                       "actual_windows": actual_windows,
                        "records": records})
     return {"meeting_id": meeting["meeting_id"], "records": len(records),
-            "windows": len(windows), "rejected_records": rejected_records,
+            "windows": actual_windows, "rejected_records": rejected_records,
             "fallback_windows": fallback_windows, "cached": False}
 
 
@@ -334,11 +380,15 @@ def memory_hints(question: str, team_id: str, as_of="d", parsed_dir=PARSED_DIR,
     """Select small planning hints; transcript retrieval remains the evidence source."""
 
     records = load_team_memory(team_id, as_of, parsed_dir, memory_dir)
-    terms = set(re.findall(r"[a-z0-9]+", question.casefold()))
+    stopwords = {"about", "and", "are", "did", "does", "finally", "for", "from",
+                 "how", "into", "meeting", "team", "the", "their", "them", "was",
+                 "were", "what", "when", "where", "which", "who", "why"}
+    terms = {term for term in re.findall(r"[a-z0-9]+", question.casefold())
+             if len(term) > 2 and term not in stopwords}
     ranked = sorted(records, key=lambda item: (
         -len(terms & set(re.findall(r"[a-z0-9]+",
                                     (item.topic + " " + item.summary).casefold()))),
-        -item.meeting_number, item.event_id))
+        item.status == "superseded", -item.meeting_number, item.event_id))
     return [{"meeting_id": item.meeting_id, "topic": item.topic,
              "summary": item.summary, "status": item.status,
              "source_turn_ids": list(item.source_turn_ids)}
