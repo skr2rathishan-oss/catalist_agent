@@ -101,6 +101,29 @@ class TestMemoryPipeline(unittest.TestCase):
             self.assertEqual(result["rejected_records"], 0)
             self.assertEqual(client.calls, 1)
 
+    def test_retry_preserves_better_saved_memory(self):
+        item = meeting("ES2002a", "We agreed to use normal batteries only.")
+        class MixedClient(FakeClient):
+            def generate_json(self, system, payload):
+                if "invalid_records" in payload:
+                    self.calls += 1
+                    return {"records": []}
+                result = super().generate_json(system, payload)
+                result["records"].append(dict(result["records"][0], type="unknown"))
+                return result
+        class EmptyClient(FakeClient):
+            def generate_json(self, system, payload):
+                self.calls += 1
+                return {"records": []}
+        with tempfile.TemporaryDirectory() as directory:
+            memory = Path(directory)
+            first = extract_meeting(item, MixedClient(), memory)
+            self.assertEqual((first["records"], first["rejected_records"]), (1, 1))
+            saved = (memory / "ES2002a.json").read_bytes()
+            second = extract_meeting(item, EmptyClient(), memory, retry_rejected=True)
+            self.assertTrue(second["retained_existing"])
+            self.assertEqual((memory / "ES2002a.json").read_bytes(), saved)
+
     def test_reconciliation_checks_related_topic_wording(self):
         first = meeting("ES2002a", "We decided on normal batteries for power.")
         later = meeting("ES2002c", "We changed the battery choice to rechargeable cells.")

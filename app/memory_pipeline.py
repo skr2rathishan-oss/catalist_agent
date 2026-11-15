@@ -228,19 +228,21 @@ def extract_meeting(meeting: dict, client, memory_dir=MEMORY_DIR,
     model = client.settings.model + (f"+{fallback_client.settings.model}" if fallback_client else "")
     max_tokens = getattr(client.settings, "max_tokens", None)
     digest = _source_hash(meeting)
+    saved_for_retry = None
     if path.is_file():
         existing = json.loads(path.read_text(encoding="utf-8"))
         if (existing.get("source_sha256") == digest and existing.get("model") == model
                 and existing.get("prompt_version") == MEMORY_PROMPT_VERSION
                 and existing.get("generation_max_tokens") == max_tokens
                 and existing.get("max_words") == max_words
-                and (not retry_rejected or existing.get("rejected_records", 0) == 0)
                 and isinstance(existing.get("records"), list)):
             for record in existing["records"]:
                 validate_record(record, {meeting["meeting_id"]: meeting})
-            return {"meeting_id": meeting["meeting_id"], "records": len(existing["records"]),
-                    "windows": 0, "rejected_records": existing.get("rejected_records", 0),
-                    "fallback_windows": existing.get("fallback_windows", 0), "cached": True}
+            if not retry_rejected or existing.get("rejected_records", 0) == 0:
+                return {"meeting_id": meeting["meeting_id"], "records": len(existing["records"]),
+                        "windows": 0, "rejected_records": existing.get("rejected_records", 0),
+                        "fallback_windows": existing.get("fallback_windows", 0), "cached": True}
+            saved_for_retry = existing
     records, rejected_records, fallback_windows, actual_windows = [], 0, 0, 0
     windows = turn_windows(meeting, max_words)
     for number, turn_ids in enumerate(windows, 1):
@@ -252,6 +254,14 @@ def extract_meeting(meeting: dict, client, memory_dir=MEMORY_DIR,
         for index, record in enumerate(extracted, 1):
             record = replace(record, event_id=f"{meeting['meeting_id']}_w{number:03d}_e{index:03d}")
             records.append(record_to_dict(record))
+    if saved_for_retry is not None and (
+            len(records), -rejected_records) <= (
+                len(saved_for_retry["records"]), -saved_for_retry["rejected_records"]):
+        return {"meeting_id": meeting["meeting_id"],
+                "records": len(saved_for_retry["records"]), "windows": actual_windows,
+                "rejected_records": saved_for_retry["rejected_records"],
+                "fallback_windows": saved_for_retry.get("fallback_windows", 0),
+                "cached": True, "retained_existing": True}
     _write_json(path, {"meeting_id": meeting["meeting_id"], "source_sha256": digest,
                        "model": model, "prompt_version": MEMORY_PROMPT_VERSION,
                        "max_words": max_words, "generation_max_tokens": max_tokens,
