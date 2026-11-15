@@ -5,13 +5,13 @@ from app.agents.qa_agent import QuestionAnsweringAgent
 
 BRIEF_SECTIONS = (
     ("Decisions already made",
-     "Before Team TS3012's final meeting, what concrete product decisions had the team agreed by the end of meeting c? Summarize only established decisions, not proposals."),
+     "Before Team TS3012's final meeting, what concrete product decisions had the team agreed by the end of meeting c? Cover the main design and market choices; distinguish established decisions from proposals."),
     ("What changed",
-     "Across Team TS3012 meetings a through c, which important product decisions or plans changed, and what did each change from and to?"),
+     "Across Team TS3012 meetings a through c, which important decisions or plans changed? State the earlier and later positions only when both have source evidence."),
     ("Open actions and owners",
-     "At the end of Team TS3012 meeting c, answer both separately: (1) in the 'work on our own' exchange, which market-analysis and project-report assignments were stated and who owned each; and (2) which design deliverable was requested for the next meeting and who owned it. Apply these ownership rules to every cited turn: when the source speaker says 'I am supposed to' do a task, name that source speaker as its owner; when the source speaker says 'you' should do a task and the addressee is unresolved, mark its owner not safely identifiable and never assign it to the source speaker. In particular, the design request is spoken by Speaker A as 'You doodle', so do not name Speaker A as the design owner unless another source explicitly resolves that addressee. Exclude unresolved product features. Do not guess an addressee or treat elapsed time as completion."),
+     "At the end of Team TS3012 meeting c, which concrete assignments remain open, what deliverables are due, and who owns each? Name an owner only when the source resolves the addressee. Mark an uncertain owner as unknown; do not infer completion from elapsed time."),
     ("Open disagreements",
-     "By the end of Team TS3012 meeting c, what final statement and vote show how the team closed its product disagreements? Summarize the grounded closure, and do not treat earlier objections as still open after an explicit resolution."),
+     "At the end of Team TS3012 meeting c, which product disagreements remain unresolved? Distinguish open objections from topics explicitly settled by discussion or vote. If none are evidenced as open, say so without inventing an issue."),
 )
 
 

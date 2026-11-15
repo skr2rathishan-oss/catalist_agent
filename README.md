@@ -2,6 +2,28 @@
 
 A local Gradio interface and command line pipeline for searching meeting transcripts and answering questions with source citations. It parses transcript turns, makes overlapping chunks, indexes them with SQLite BM25, and can add NVIDIA embeddings for semantic or hybrid retrieval.
 
+## Architecture
+
+```mermaid
+flowchart LR
+    A["Local .txt transcripts"] --> B["Parse and normalize"]
+    B --> C["Turn-aware chunks"]
+    C --> D["SQLite BM25"]
+    C --> E["NVIDIA embeddings"]
+    E --> F["Local vector SQLite"]
+    B --> G["Bounded event extraction"]
+    G --> H["Validated local memory"]
+    H --> I["Explicit replacement links"]
+    I --> J["As-of memory hints"]
+    D --> K["Plan → search → check → repeat"]
+    F --> K
+    J --> K
+    K --> L["Exact quote verification"]
+    L --> M["Local answers and brief"]
+```
+
+The transcript, indexes, memory records, caches, and outputs are local files. The NVIDIA API receives transcript windows for extraction or embeddings and retrieved excerpts for generated answers. Memory summaries focus the search; the final answer must still cite original transcript turns.
+
 ## Requirements
 
 - Python 3.13 and `pip`.
@@ -33,11 +55,33 @@ Place UTF-8 `.txt` files in `data/raw/transcripts/`. A file name should match it
 
 # Optional: use the existing chunks, rebuild BM25, then create/update embeddings.
 .\.venv\Scripts\python.exe scripts/build.py --index-only --embeddings
+
+# After adding or changing transcripts, skip unchanged parsing and update BM25.
+.\.venv\Scripts\python.exe scripts/build.py --incremental
+
+# Update only changed vector rows too (uses API quota for uncached chunks).
+.\.venv\Scripts\python.exe scripts/build.py --incremental --embeddings
 ```
 
 For a first build with embeddings, `scripts/build.py --embeddings` performs both commands in one pass. `--index-only` requires existing chunk files. Run the plain build again when you add or change transcripts; then run the embedding command if you use semantic or hybrid retrieval. Re-running embeddings reuses matching vectors in the local cache and requests only uncached text. Embedding calls use API quota.
 
 Chunking happens inside `scripts/build.py`: each parsed meeting is saved in `data/parsed/` and divided into speaker-turn-aware chunks in `data/processed/chunks/`. Defaults in `app/config.py` are a 400-token target, 500-token maximum, and 50-token overlap. Change `CHUNK_TARGET`, `CHUNK_MAXIMUM`, and `CHUNK_OVERLAP` there, then rerun the plain build and the embedding build. Preserve enough overlap to retain context at boundaries. The BM25 and vector indexes are built from the chunks; no separate chunk command is required.
+
+### Build decision and action memory
+
+```powershell
+# Show the number of bounded extraction windows without making API calls.
+.\.venv\Scripts\python.exe scripts/build_memory.py
+
+# Start with one meeting, then build the full local event store.
+.\.venv\Scripts\python.exe scripts/build_memory.py --meeting TS3012a --run
+.\.venv\Scripts\python.exe scripts/build_memory.py --run --no-reconcile --model nvidia/nemotron-3.5-lightning-30b-a3b --fallback-model nvidia/nemotron-3.5-bolt-e4b
+
+# Once every meeting has a saved file, link explicit later replacements.
+.\.venv\Scripts\python.exe scripts/build_memory.py --run --reconcile-only --model nvidia/nemotron-3.5-lightning-30b-a3b
+```
+
+Extraction checks each proposed event and exact quote against its source turn. Invalid records are repaired once or rejected and counted; an optional fallback model is used only for empty or heavily rejected windows. Per-meeting files in `data/processed/memory/` are reused when the transcript, model settings, prompt version, and window size match and no records were rejected. Files with rejected records can be retried; use `--reconcile-only` to link all saved complete teams without rerunning extraction. Reconciliation asks whether a later related event explicitly replaces an earlier one, then validates each link. As-of views derive the current status at a meeting cutoff. This stage sends transcript text to NVIDIA and can make hundreds of calls; review the dry-run count and your quota first. Use `--team`, `--meeting`, or `--max-meetings` for a bounded run, and `--no-reconcile` to extract without linking.
 
 ## Configure models
 
@@ -82,6 +126,8 @@ Optional local evaluation and submission commands require question files that ar
 
 ```powershell
 .\.venv\Scripts\python.exe scripts/evaluate.py --method bm25 --questions evaluation/my_questions.json
+.\.venv\Scripts\python.exe scripts/evaluate_answers.py
+.\.venv\Scripts\python.exe scripts/evaluate_answers.py --run --method hybrid
 .\.venv\Scripts\python.exe scripts/test_rag.py --id 1 --method bm25 --no-judge
 .\.venv\Scripts\python.exe scripts/submit.py --questions tests/questions.json --method hybrid
 ```
@@ -97,10 +143,13 @@ The submission script expects a local JSON object with a `questions` array. Each
 | `data/processed/chunks/` | Chunk JSON, including source excerpts. |
 | `data/processed/bm25.sqlite3` | Keyword index. |
 | `data/processed/vectors.sqlite3` | Normalized embedding vectors and chunk payloads. |
+| `data/processed/memory/` | Validated per-meeting events and per-team replacement links. |
 | `data/cache/embeddings.sqlite3` | Resumable embedding cache. |
 | `data/cache/generation.sqlite3` | Generation response cache. |
 | `data/processed/*.jsonl`, `data/processed/build.log` | Usage logs and build log. |
 | `evaluation/`, `outputs/`, `tests/*.json` | Local question sets, reports, and answers. |
+
+`scripts/evaluate_answers.py` scores the ten locally checked questions separately from retrieval. It uses the checked answers only after the agent run, saves details in `data/processed/evaluation_runs/`, and writes `evaluation/answer_results.md`. Model verdicts still require human comparison with the transcripts. The script is a dry run unless `--run` is supplied.
 
 These paths, `.env`, `docs/`, the assignment PDF, and `guideline.md` are ignored by Git. Only `data/.gitkeep` is committed to retain the folder. To preserve an index between computers, copy the relevant `data/` files through your own private local transfer or rebuild from your transcripts. Keep the BM25 index, vector index, and embedding settings in sync; a changed corpus or vector configuration requires rebuilding the vector index. The embedding cache can speed up rebuilding but is optional.
 

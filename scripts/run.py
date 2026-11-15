@@ -12,7 +12,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from app.agents.qa_agent import QuestionAnsweringAgent
 from app.agents.prompts import GENERATION_CHECK_PROMPT
-from app.config import PROJECT_ROOT, ENV_FILE, load_generation_settings
+from app.config import PROJECT_ROOT, ENV_FILE, MEMORY_DIR, load_generation_settings
 import app.generation as generation_module
 from app.generation import GenerationError, NvidiaGenerationClient
 from app.llm import EmbeddingError, NvidiaEmbeddingClient
@@ -71,7 +71,8 @@ def main():
                     "embedding": lambda *a, **kw: search_vectors(*a, **kw, client=embedding),
                     "hybrid": lambda *a, **kw: search_hybrid(*a, **kw, client=embedding)}
         agent = QuestionAnsweringAgent(client=generation, search=searches[args.method],
-                                       limit=args.limit, max_rounds=args.max_rounds)
+                                       limit=args.limit, max_rounds=args.max_rounds,
+                                       memory_dir=MEMORY_DIR)
         result = agent.answer(args.question, args.team, args.as_of)
         result["generation_model"] = settings.model
         result["generation_provider"] = settings.provider

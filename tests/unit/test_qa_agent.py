@@ -162,13 +162,16 @@ class TestQuestionAnsweringAgent(unittest.TestCase):
         self.assertEqual(result["status"], "invalid_evidence")
         self.assertEqual(self.client.generate_json.call_count, 3)
 
-    def test_final_citations_cannot_omit_a_checked_requirement(self):
+    def test_repaired_citations_still_need_semantic_review(self):
 
         self.search.return_value = [dict(self.chunk, turn_ids=[1, 2])]
+        review = {"approved": False, "issues": ["The answer omits the assigned price check."]}
         result = self.agent([self.requirement_plan(), self.requirement_coverage(True),
-                             self.draft, self.draft, self.draft]).answer("Power and price owner?", "ES2002")
+                             self.draft, review, self.draft, review, self.draft, review]).answer(
+                                 "Power and price owner?", "ES2002")
         self.assertEqual(result["status"], "invalid_answer")
-        self.assertIn("p1_r2", result["trace"][-1]["validation_error"])
+        self.assertIn("omits the assigned price check", result["trace"][-1]["validation_error"])
+        self.assertTrue(any(item.get("citation_repair") for item in result["trace"]))
 
     def test_requirement_coverage_rejects_missing_duplicate_and_unknown_ids(self):
 
@@ -533,6 +536,20 @@ class TestQuestionAnsweringAgent(unittest.TestCase):
         self.draft["answer"] = "One. Two. Three. Four"
         result = self.agent([self.plan, self.coverage, self.draft, self.draft, self.draft]).answer("Power?", "ES2002")
         self.assertEqual(result["status"], "invalid_answer")
+
+    def test_coverage_citation_repair_selects_original_excerpt(self):
+        quote = "We agreed to use normal batteries for the remote."
+        context = {"coverage": {"parts": [
+            {"id": "p1", "requirements": [
+                {"id": "p1_r1", "evidence": [
+                    {"meeting_id": "ES2002b", "turn_id": 1, "quote": quote}]}]}]},
+            "citation_options": [
+                {"citation_id": "source-1", "meeting_id": "ES2002b",
+                 "turn_id": 1, "quote": quote}]}
+        repaired = QuestionAnsweringAgent.restore_coverage_citations(
+            {"answer": "They chose batteries.", "citations": []}, context)
+        self.assertEqual(repaired["citations"],
+                         [{"citation_id": "source-1", "part_ids": ["p1"]}])
 
 
 if __name__ == "__main__":

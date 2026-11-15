@@ -6,7 +6,7 @@ import sqlite3
 import tempfile
 import unittest
 
-from app.index import build_keyword_index
+from app.index import build_keyword_index, update_keyword_index
 from app.retriever import search_keywords
 
 
@@ -51,6 +51,16 @@ class TestKeywordSearch(unittest.TestCase):
         self.assertEqual(scores, sorted(scores, reverse=True))
         self.assertTrue(all(score > 0 for score in scores))
         self.assertEqual(results[0]["_query_terms"], ["lithium", "battery"])
+
+    def test_incremental_update_replaces_changed_meeting_and_removes_deleted_one(self):
+        self.assertEqual(update_keyword_index(self.chunks_dir, self.index)["updated_meetings"], 0)
+        self.write_meeting("ES2002b", "The new design uses a solar cell.")
+        (self.chunks_dir / "ES2002c.json").unlink()
+        counts = update_keyword_index(self.chunks_dir, self.index)
+        self.assertEqual(counts["updated_meetings"], 2)
+        self.assertEqual(counts["chunks"], 4)
+        self.assertEqual([row["meeting_id"] for row in self.search("solar")], ["ES2002b"])
+        self.assertNotIn("ES2002c", [row["meeting_id"] for row in self.search("wooden")])
 
     def test_team_filter_before_limit(self):
         results = self.search("lithium", limit=1)

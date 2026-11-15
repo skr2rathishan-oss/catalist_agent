@@ -10,7 +10,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from app.ingest import build_ingestion
 from app.config import BUILD_LOG_FILE
-from app.index import build_keyword_index
+from app.index import build_keyword_index, update_keyword_index
 
 
 def main() -> None:
@@ -18,6 +18,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--index-only", action="store_true", help="Index existing chunk files without rerunning ingestion")
     parser.add_argument("--embeddings", action="store_true", help="Generate cached NVIDIA embeddings after keyword indexing (uses API quota)")
+    parser.add_argument("--incremental", action="store_true", help="Skip unchanged transcripts and update only changed keyword meetings")
     args = parser.parse_args()
     BUILD_LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
     logging.basicConfig(
@@ -27,12 +28,14 @@ def main() -> None:
     )
     counts = {}
     if not args.index_only:
-        counts["ingestion"] = build_ingestion()
-    counts["bm25"] = build_keyword_index()
+        counts["ingestion"] = build_ingestion(incremental=args.incremental)
+    counts["bm25"] = update_keyword_index() if args.incremental else build_keyword_index()
     if args.embeddings:
         from app.llm import NvidiaEmbeddingClient
-        from app.vector_store import build_vector_index
-        counts["embeddings"] = build_vector_index(NvidiaEmbeddingClient())
+        from app.vector_store import build_vector_index, update_vector_index
+        client = NvidiaEmbeddingClient()
+        counts["embeddings"] = (update_vector_index(client) if args.incremental
+                                else build_vector_index(client))
     print(json.dumps(counts, indent=2))
 
 

@@ -10,6 +10,7 @@ from app.config import ALL_TEAMS, PARSED_DIR, project_path
 from app.generation import NvidiaGenerationClient
 from app.ingest import normalise_text
 from app.memory import source_turns
+from app.memory_pipeline import memory_hints
 from app.retriever import search_hybrid, validate_search, validate_meeting_filter
 from app.retrieval_plan import requested_meeting
 
@@ -86,7 +87,8 @@ class QuestionAnsweringAgent:
     """Use bounded searches, one coverage repair, and one draft repair."""
 
     def __init__(self, client=None, search=None, parsed_dir=PARSED_DIR,
-                 max_rounds=2, limit=5, max_context_words=6000, on_event=None):
+                 max_rounds=2, limit=5, max_context_words=6000, on_event=None,
+                 memory_dir=None):
 
         if type(max_rounds) is not int or not 1 <= max_rounds <= 3:
             raise ValueError("max_rounds must be between one and three")
@@ -101,6 +103,7 @@ class QuestionAnsweringAgent:
         self.limit = limit
         self.max_context_words = max_context_words
         self.on_event = on_event
+        self.memory_dir = project_path(memory_dir) if memory_dir is not None else None
 
     def emit(self, stage, **details):
         """Publish observable steps without model reasoning or credentials."""
@@ -124,6 +127,14 @@ class QuestionAnsweringAgent:
             base["scope"] = ("All teams. Sources may come from different teams; a meeting_id starts with its "
                              "team ID (e.g. ES2002b is team ES2002). Never merge different teams' decisions; "
                              "name the team in the answer when it matters.")
+        elif self.memory_dir is not None:
+            try:
+                hints = memory_hints(question, team_id, as_of, self.parsed_dir, self.memory_dir)
+                if hints:
+                    base["memory_hints"] = hints
+                    self.emit("memory_ready", records=len(hints), team_id=team_id, as_of=as_of)
+            except (OSError, ValueError) as error:
+                self.emit("memory_unavailable", reason=str(error))
         self.emit("planning", question=question, team_id=team_id, selected_team=selected_team,
                   as_of=as_of, target_meeting=base["target_meeting"])
         plan = self.client.generate_json(QA_PLAN, base)
@@ -416,6 +427,47 @@ class QuestionAnsweringAgent:
                     raise ValueError(f"Final citations omit evidence for requirement {requirement['id']}")
         return {"answer": text, "citations": checked_citations}
 
+    @staticmethod
+    def restore_coverage_citations(draft, context):
+        """Select at most three verified coverage excerpts when draft IDs omit them."""
+
+        if not isinstance(draft, dict) or not isinstance(draft.get("answer"), str):
+            raise ValueError("No answer available for citation repair")
+        requirements = {requirement["id"]: (part["id"], requirement["evidence"])
+                        for part in context.get("coverage", {}).get("parts", [])
+                        for requirement in part.get("requirements", [])}
+        if not requirements or any(not evidence for _, evidence in requirements.values()):
+            raise ValueError("Coverage evidence is incomplete")
+        candidates = []
+        for option in context.get("citation_options", []):
+            covers = set()
+            for identifier, (_, evidence) in requirements.items():
+                if any(option["meeting_id"] == item["meeting_id"]
+                       and option["turn_id"] == item["turn_id"]
+                       and verify_quote(item["quote"], {"utterances": [{"original_text": option["quote"]}]})
+                       for item in evidence):
+                    covers.add(identifier)
+            if covers:
+                candidates.append((option, covers))
+        selected, missing = [], set(requirements)
+        while missing and len(selected) < 3:
+            usable = [(option, covers & missing) for option, covers in candidates
+                      if option["citation_id"] not in {item[0]["citation_id"] for item in selected}]
+            if not usable:
+                break
+            option, new = max(usable, key=lambda item: (len(item[1]), -len(item[0]["quote"].split())))
+            if not new:
+                break
+            selected.append((option, new))
+            missing -= new
+        if missing:
+            raise ValueError("Three source quotes cannot retain every required fact")
+        citations = [{"citation_id": option["citation_id"],
+                      "part_ids": list(dict.fromkeys(requirements[identifier][0]
+                                                    for identifier in sorted(covered)))}
+                     for option, covered in selected]
+        return {"answer": draft["answer"], "citations": citations}
+
     def draft(self, context, meetings, sources, team_id, as_of, trace):
         """Allow two bounded repairs, then return a checked answer or failure."""
 
@@ -423,7 +475,14 @@ class QuestionAnsweringAgent:
             self.emit("drafting", attempt=attempt + 1)
             candidate = self.client.generate_json(QA_DRAFT, context)
             try:
-                candidate = self.validate_draft(candidate, context, meetings, sources, team_id, as_of)
+                try:
+                    candidate = self.validate_draft(candidate, context, meetings, sources, team_id, as_of)
+                except ValueError as first_error:
+                    if "Final citations omit evidence" not in str(first_error):
+                        raise
+                    repaired = self.restore_coverage_citations(candidate, context)
+                    candidate = self.validate_draft(repaired, context, meetings, sources, team_id, as_of)
+                    trace.append({"draft_attempt": attempt + 1, "citation_repair": "coverage excerpts"})
                 self.emit("verifying_answer", attempt=attempt + 1, citations=candidate["citations"])
                 review = self.client.generate_json(QA_REVIEW, dict(context, candidate=candidate))
                 require_fields(review, {"approved", "issues"})

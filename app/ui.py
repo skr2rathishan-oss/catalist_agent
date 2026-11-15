@@ -9,7 +9,7 @@ from threading import Thread
 import time
 
 from app.agents.qa_agent import QuestionAnsweringAgent
-from app.config import ALL_TEAMS, BM25_INDEX_FILE, VECTOR_INDEX_FILE, PARSED_DIR, load_generation_settings
+from app.config import ALL_TEAMS, BM25_INDEX_FILE, VECTOR_INDEX_FILE, PARSED_DIR, MEMORY_DIR, load_generation_settings
 from app.generation import GenerationError
 from app.llm import EmbeddingError, NvidiaEmbeddingClient
 from app.retriever import search_hybrid, search_keywords, validate_search
@@ -105,7 +105,8 @@ def stream_question(question, team, cutoff, method, limit, rounds, agent_factory
                             "embedding": lambda *a, **kw: search_vectors(*a, **kw, client=embedding),
                             "hybrid": lambda *a, **kw: search_hybrid(*a, **kw, client=embedding)}
                 agent = QuestionAnsweringAgent(generation, searches[method], max_rounds=rounds,
-                                               limit=limit, on_event=events.put)
+                                               limit=limit, on_event=events.put,
+                                               memory_dir=MEMORY_DIR)
                 try:
                     result = agent.answer(question, team_id, meeting_cutoff)
                 finally:

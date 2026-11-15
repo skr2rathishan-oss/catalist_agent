@@ -105,6 +105,55 @@ def build_vector_index(client, keyword_index=BM25_INDEX_FILE, index_path=VECTOR_
         source.close()
 
 
+def update_vector_index(client, keyword_index=BM25_INDEX_FILE, index_path=VECTOR_INDEX_FILE):
+    """Embed only changed chunks while keeping the old index on failure."""
+
+    keyword_index, index_path = project_path(keyword_index).resolve(), project_path(index_path).resolve()
+    if not index_path.is_file():
+        return build_vector_index(client, keyword_index, index_path)
+    source = open_readonly(keyword_index)
+    target = sqlite3.connect(index_path)
+    try:
+        fingerprint = index_fingerprint(source)
+        if target.execute("PRAGMA user_version").fetchone()[0] != VECTOR_VERSION:
+            raise ValueError("Unsupported vector index; rebuild embeddings")
+        metadata = dict(target.execute("SELECT name, value FROM metadata"))
+        if (metadata.get("model") != client.settings.model
+                or metadata.get("dimensions") != str(client.settings.dimensions)
+                or metadata.get("format_version") != str(FORMAT_VERSION)):
+            raise ValueError("Embedding configuration changed; rebuild embeddings explicitly")
+        if metadata.get("source_fingerprint") == fingerprint:
+            count = target.execute("SELECT COUNT(*) FROM vectors").fetchone()[0]
+            return {"chunks": count, "updated_chunks": 0, "removed_chunks": 0}
+        old = dict(target.execute("SELECT chunk_id, payload FROM vectors"))
+        current = {chunk["chunk_id"]: (payload, chunk) for (payload,) in
+                   source.execute("SELECT payload FROM chunks")
+                   for chunk in [json.loads(payload)]}
+        changed = [chunk for key, (payload, chunk) in current.items()
+                   if old.get(key) != payload]
+        removed = sorted(old.keys() - current.keys())
+        for key in removed:
+            target.execute("DELETE FROM vectors WHERE chunk_id=?", (key,))
+        for start in range(0, len(changed), client.settings.batch_size):
+            batch = changed[start:start + client.settings.batch_size]
+            vectors = client.embed([item["normalised_text"] for item in batch], task="document")
+            if len(vectors) != len(batch):
+                raise ValueError("Embedding count does not match changed chunks")
+            for chunk, vector in zip(batch, vectors):
+                vector = normalise_vector(vector, client.settings.dimensions)
+                packed = struct.pack(f"<{len(vector)}f", *vector)
+                target.execute("INSERT OR REPLACE INTO vectors VALUES (?, ?, ?, ?, ?)", (
+                    chunk["chunk_id"], chunk["team_id"], chunk["meeting_number"],
+                    json.dumps(chunk, ensure_ascii=False), packed))
+        target.execute("UPDATE metadata SET value=? WHERE name='source_fingerprint'", (fingerprint,))
+        target.commit()
+        return {"chunks": len(current), "updated_chunks": len(changed),
+                "removed_chunks": len(removed)}
+    finally:
+        target.close()
+        source.close()
+
+
 def search_vectors(query, team_id, as_of="d", limit=SEARCH_LIMIT, client=None,
                    index_path=VECTOR_INDEX_FILE, min_score=None, meeting_number=None):
     """Return exact cosine matches after SQL team/cutoff filtering.

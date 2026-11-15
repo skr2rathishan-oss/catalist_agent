@@ -23,6 +23,17 @@ STATUSES = {
 }
 FIELDS = {"event_id", "type", "team_id", "meeting_id", "speaker_id", "topic", "summary",
           "source_turn_ids", "evidence", "status", "owner", "owner_source_turn_ids", "supersedes"}
+TOPIC_STOPWORDS = {"about", "after", "and", "confirmation", "decision", "design",
+                   "final", "for", "from", "group", "information", "meeting", "new",
+                   "other", "product", "project", "remote", "requirements", "team",
+                   "the", "type", "with"}
+
+
+def topic_terms(topic: str) -> set[str]:
+    """Small lexical guard for candidate and validated replacement links."""
+
+    return {term for term in re.findall(r"[a-z0-9]+", topic.casefold())
+            if len(term) > 3 and term not in TOPIC_STOPWORDS}
 
 
 @dataclass(frozen=True)
@@ -161,8 +172,11 @@ def validate_ledger(records, meetings):
             if old_id not in by_id:
                 raise ValueError("Supersession target does not exist")
             older = by_id[old_id]
-            if newer.team_id != older.team_id or " ".join(newer.topic.lower().split()) != " ".join(older.topic.lower().split()):
-                raise ValueError("Supersession requires the same team and topic")
+            if newer.team_id != older.team_id:
+                raise ValueError("Supersession requires the same team")
+            same_topic = " ".join(newer.topic.lower().split()) == " ".join(older.topic.lower().split())
+            if not same_topic and not (topic_terms(newer.topic) & topic_terms(older.topic)):
+                raise ValueError("Supersession requires a related topic")
             if newer.type not in families or families[newer.type] != families.get(older.type):
                 raise ValueError("Incompatible supersession event types")
             if (newer.meeting_number, min(newer.source_turn_ids)) <= (older.meeting_number, max(older.source_turn_ids)):

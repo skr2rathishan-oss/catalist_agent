@@ -6,9 +6,9 @@ from types import SimpleNamespace
 import tempfile
 import unittest
 
-from app.index import build_keyword_index
+from app.index import build_keyword_index, update_keyword_index
 from app.retriever import search_hybrid
-from app.vector_store import build_vector_index, search_vectors
+from app.vector_store import build_vector_index, update_vector_index, search_vectors
 
 
 class FakeEmbeddingClient:
@@ -76,6 +76,18 @@ class TestVectorSearch(unittest.TestCase):
         self.assertIn("solar cell", result["original_text"])
         self.assertAlmostEqual(result["score"], 1.0)
         self.assertEqual(self.client.calls[0][1], "query")
+
+    def test_incremental_vector_update_embeds_only_changed_chunk(self):
+        self.write_meeting("ES2002a", "The final choice uses solar power.")
+        update_keyword_index(self.chunks, self.keyword_index)
+        result = update_vector_index(self.client, self.keyword_index, self.vector_index)
+        self.assertEqual(result["updated_chunks"], 1)
+        self.assertEqual(len(self.client.calls), 1)
+        self.assertEqual(self.client.calls[0][1], "document")
+        self.client.calls.clear()
+        self.assertEqual(update_vector_index(self.client, self.keyword_index, self.vector_index)["updated_chunks"], 0)
+        self.assertEqual(self.client.calls, [])
+        self.assertEqual(self.search(as_of="a", limit=1)[0]["meeting_id"], "ES2002a")
 
     def test_hybrid_exact_phase_does_not_inject_latest_meeting(self):
 

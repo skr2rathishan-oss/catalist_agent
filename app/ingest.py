@@ -45,6 +45,7 @@ def build_ingestion(
     raw_dir: str | Path = RAW_DIR,
     parsed_dir: str | Path = PARSED_DIR,
     chunks_dir: str | Path = CHUNKS_DIR,
+    incremental: bool = False,
 ) -> dict[str, int]:
     """Parse and chunk the canonical input, preserving source files and raw text."""
     from app.ingestion.loader import TranscriptLoader
@@ -70,7 +71,16 @@ def build_ingestion(
     parser = TranscriptParser()
     chunker = TranscriptChunker()
     counts = {"meetings": 0, "utterances": 0, "chunks": 0}
+    if incremental:
+        counts["skipped"] = 0
     for transcript in transcripts:
+        path = parsed_dir / f"{transcript['meeting_id']}.json"
+        chunk_path = chunks_dir / f"{transcript['meeting_id']}.json"
+        if incremental and path.is_file() and chunk_path.is_file():
+            prior = json.loads(path.read_text(encoding="utf-8"))
+            if prior.get("original_transcript_text") == transcript["raw_text"]:
+                counts["skipped"] += 1
+                continue
         parsed = parser.parse(transcript)
         if not parsed["utterances"] or parsed["malformed_entries"] or parsed["unparsed_content"] or parsed["missing_metadata"] or parsed["warnings"]:
             raise ValueError(f"Transcript needs review: {parsed['meeting_id']}: {parsed['warnings']}")

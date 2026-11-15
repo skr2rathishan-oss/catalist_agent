@@ -11,7 +11,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from app.agents.brief_agent import BriefAgent
 from app.agents.qa_agent import QuestionAnsweringAgent
-from app.config import ANSWERS_FILE, load_generation_settings, project_path
+from app.config import ANSWERS_FILE, MEMORY_DIR, load_generation_settings, project_path
 from app.generation import GenerationError
 from app.llm import EmbeddingError, NvidiaEmbeddingClient
 from app.providers import create_client, GenerationRouter
@@ -67,7 +67,7 @@ def main():
         started = time.monotonic()
         try:
             agent = QuestionAnsweringAgent(generation, searches[args.method], limit=args.limit,
-                                            max_rounds=args.max_rounds)
+                                            max_rounds=args.max_rounds, memory_dir=MEMORY_DIR)
             result = agent.answer(case["question"], case["team"], "d")
             if result["status"] != "answered":
                 failures.append({"question_id": case["question_id"], "status": result["status"],
@@ -92,7 +92,8 @@ def main():
         print("Building TS3012 pre-final-meeting brief from meetings a-c", flush=True)
         try:
             brief = BriefAgent(QuestionAnsweringAgent(generation, searches[args.method], limit=args.limit,
-                                                      max_rounds=args.max_rounds)).build()
+                                                      max_rounds=args.max_rounds,
+                                                      memory_dir=MEMORY_DIR)).build()
             write_submission(answers, brief, output)
         except (ValueError, OSError, sqlite3.DatabaseError, GenerationError, EmbeddingError) as error:
             failures.append({"question_id": "brief", "status": "error", "reason": str(error)})

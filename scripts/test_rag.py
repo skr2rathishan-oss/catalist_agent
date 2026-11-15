@@ -25,7 +25,7 @@ if hasattr(sys.stderr, "reconfigure"):
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from app.agents.qa_agent import QuestionAnsweringAgent
-from app.config import ALL_TEAMS, load_generation_settings
+from app.config import ALL_TEAMS, MEMORY_DIR, load_generation_settings
 from app.generation import GenerationError
 from app.llm import EmbeddingError, NvidiaEmbeddingClient
 from app.providers import create_client, GenerationRouter
@@ -136,7 +136,7 @@ def main():
                     passages.append(event["details"])
 
         agent = QuestionAnsweringAgent(generation, searches[args.method], max_rounds=args.max_rounds,
-                                       limit=args.limit, on_event=collect)
+                                       limit=args.limit, on_event=collect, memory_dir=MEMORY_DIR)
         started = time.monotonic()
         result, error, verdict, reason = None, None, "not_judged", None
         try:

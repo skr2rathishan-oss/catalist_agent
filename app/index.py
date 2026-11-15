@@ -80,7 +80,10 @@ def build_keyword_index(
                 "meeting_number INTEGER NOT NULL, payload TEXT NOT NULL)"
             )
             connection.execute("CREATE INDEX chunks_team_order ON chunks(team_id, meeting_number)")
+            connection.execute("CREATE TABLE meeting_fingerprints (meeting_id TEXT PRIMARY KEY, digest TEXT NOT NULL)")
             for file in files:
+                connection.execute("INSERT INTO meeting_fingerprints VALUES (?, ?)",
+                                   (file.stem, hashlib.sha256(file.read_bytes()).hexdigest()))
                 meeting = json.loads(file.read_text(encoding="utf-8"))
                 if not isinstance(meeting, dict) or not isinstance(meeting.get("chunks"), list) or not meeting["chunks"]:
                     raise ValueError(f"Missing or empty chunk list in {file.name}")
@@ -109,3 +112,67 @@ def build_keyword_index(
         temporary_index.replace(index_path)
     logger.info("Indexed %s meetings and %s chunks in %.2fs (no model calls)", len(files), total_chunks, time.perf_counter() - started)
     return {"meetings": len(files), "chunks": total_chunks}
+
+
+def update_keyword_index(chunks_dir: str | Path = CHUNKS_DIR,
+                         index_path: str | Path = BM25_INDEX_FILE) -> dict[str, int]:
+    """Update only changed meetings; retain the corpus fingerprint used by hybrid search."""
+
+    chunks_dir, index_path = project_path(chunks_dir), project_path(index_path)
+    if not index_path.is_file():
+        return build_keyword_index(chunks_dir, index_path)
+    connection = sqlite3.connect(index_path)
+    try:
+        if connection.execute("PRAGMA user_version").fetchone()[0] != INDEX_VERSION:
+            raise ValueError("Unsupported keyword index; rebuild it")
+        if not connection.execute(
+                "SELECT 1 FROM sqlite_master WHERE name='meeting_fingerprints'").fetchone():
+            connection.close()
+            return build_keyword_index(chunks_dir, index_path)
+        files = {path.stem: path for path in chunks_dir.glob("*.json")}
+        if not files:
+            raise ValueError("No chunk files found")
+        current = {meeting_id: hashlib.sha256(path.read_bytes()).hexdigest()
+                   for meeting_id, path in files.items()}
+        prior = dict(connection.execute("SELECT meeting_id, digest FROM meeting_fingerprints"))
+        changed = sorted(set(current) ^ set(prior) |
+                         {name for name in current.keys() & prior.keys()
+                          if current[name] != prior[name]})
+        if changed:
+            for meeting_id in changed:
+                if not re.fullmatch(r"[A-Z]{2}\d{4}[a-d]", meeting_id):
+                    raise ValueError(f"Invalid chunk meeting ID: {meeting_id}")
+                rows = connection.execute(
+                    "SELECT rowid FROM chunks WHERE team_id=? AND meeting_number=?",
+                    (meeting_id[:-1], "abcd".index(meeting_id[-1]) + 1)).fetchall()
+                for (rowid,) in rows:
+                    connection.execute("DELETE FROM chunks_fts WHERE rowid=?", (rowid,))
+                    connection.execute("DELETE FROM chunks WHERE rowid=?", (rowid,))
+                connection.execute("DELETE FROM meeting_fingerprints WHERE meeting_id=?", (meeting_id,))
+                if meeting_id not in files:
+                    continue
+                data = json.loads(files[meeting_id].read_text(encoding="utf-8"))
+                if data.get("meeting_id") != meeting_id or data.get("total_chunks") != len(data.get("chunks", [])):
+                    raise ValueError(f"Invalid chunk file: {meeting_id}")
+                for chunk in data["chunks"]:
+                    _validate_chunk(chunk, data)
+                    chunk["normalised_text"] = normalise_text(chunk["original_text"])
+                    cursor = connection.execute(
+                        "INSERT INTO chunks VALUES (?, ?, ?, ?)",
+                        (chunk["chunk_id"], chunk["team_id"], chunk["meeting_number"],
+                         json.dumps(chunk, ensure_ascii=False)))
+                    connection.execute("INSERT INTO chunks_fts(rowid, normalised_text) VALUES (?, ?)",
+                                       (cursor.lastrowid, chunk["normalised_text"]))
+                connection.execute("INSERT INTO meeting_fingerprints VALUES (?, ?)",
+                                   (meeting_id, current[meeting_id]))
+            digest = hashlib.sha256()
+            for (payload,) in connection.execute("SELECT payload FROM chunks ORDER BY chunk_id"):
+                digest.update(payload.encode("utf-8"))
+                digest.update(b"\n")
+            connection.execute("UPDATE metadata SET value=? WHERE name='source_fingerprint'",
+                               (digest.hexdigest(),))
+            connection.commit()
+        chunks = connection.execute("SELECT COUNT(*) FROM chunks").fetchone()[0]
+        return {"meetings": len(files), "chunks": chunks, "updated_meetings": len(changed)}
+    finally:
+        connection.close()

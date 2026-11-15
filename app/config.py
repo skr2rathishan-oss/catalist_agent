@@ -32,6 +32,7 @@ MEMORY_CONTEXT_MAX_WORDS = 2000
 GENERATION_CACHE_FILE = CACHE_DIR / "generation.sqlite3"
 GENERATION_USAGE_FILE = PROCESSED_DIR / "generation_usage.jsonl"
 MODEL_CHECKS_DIR = PROCESSED_DIR / "model_checks"
+MEMORY_DIR = PROCESSED_DIR / "memory"
 # Generation uses NVIDIA only (the same key as embeddings).
 GENERATION_PROVIDERS = {
     "nvidia": {"url": "https://integrate.api.nvidia.com/v1", "key": "NVIDIA_API_KEY",

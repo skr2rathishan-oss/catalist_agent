@@ -48,6 +48,8 @@ class TestIngest(unittest.TestCase):
             self.assertIn("L_C_D_", turn["original_text"])
             self.assertIn("LCD", turn["normalised_text"])
             self.assertEqual(meeting["original_transcript_text"][turn["start_char"]:turn["end_char"]], turn["original_text"])
+            incremental = build_ingestion(*args, incremental=True)
+            self.assertEqual(incremental, {"meetings": 0, "utterances": 0, "chunks": 0, "skipped": 1})
 
     def test_missing_input_fails(self):
         with tempfile.TemporaryDirectory() as directory:
