@@ -153,7 +153,7 @@ The submission script expects a local JSON object with a `questions` array. Each
 
 These paths, `.env`, `docs/`, the assignment PDF, `guideline.md`, and common document/transcript file extensions are ignored by Git. Only `data/.gitkeep` is committed to retain the folder. To preserve an index between computers, copy the relevant `data/` files through your own private local transfer or rebuild from your transcripts. Keep the BM25 index, vector index, and embedding settings in sync; a changed corpus or vector configuration requires rebuilding the vector index. The embedding cache can speed up rebuilding but is optional.
 
-**Privacy note:** Storage is local, but the NVIDIA embedding API receives chunk text when generating embeddings, and generation receives retrieved source text and questions. `bm25` indexing and retrieval are local; generated answers still call the API. If your documents must never leave the computer, use only local BM25 indexing/retrieval and do not run embedding, generation, UI question answering, or model probe commands until those API integrations are replaced.
+**Privacy note:** The UI binds to `127.0.0.1` by default, disables Gradio analytics, and does not create a public share link. Storage is local, but the NVIDIA embedding API receives chunk text when generating embeddings, and generation receives retrieved source text and questions. `bm25` indexing and retrieval are local; generated answers still call the API. If your documents must never leave the computer, use only local BM25 indexing/retrieval and do not run embedding, generation, UI question answering, or model probe commands until those API integrations are replaced.
 
 ## Measured build and evaluation
 
@@ -165,10 +165,13 @@ A previous 20-question agent run scored 65% under a provisional model judge (12 
 
 ```powershell
 .\.venv\Scripts\python.exe -B -m unittest discover -s tests/unit -v
+.\.venv\Scripts\python.exe scripts/verify_submission.py
 git status --short
 git ls-files
 git check-ignore -v .env data/raw/transcripts/ES2002a.txt data/processed/vectors.sqlite3 docs/private.pdf outputs/answers.json
 ```
+
+`verify_submission.py` checks all answer IDs, citation counts, team scope, brief sections, and each quote against one original local speaker turn. It uses no API calls and does not judge whether the quoted evidence proves the answer.
 
 The new GitHub repository should receive a **fresh root commit**. Older local history tracked `.env` and cache files, so do not push an old branch or its history. Before pushing, inspect the staged file list and confirm it contains code, tests, `.env.example`, `.gitignore`, `requirements.txt`, `README.md`, and `data/.gitkeep` only. Never use `git add -f` for ignored files. If a real key was ever pushed to the previous remote, rotate it with the provider.
 
